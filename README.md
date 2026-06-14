@@ -1,418 +1,225 @@
-# AI-Powered Malware and Forensics Analysis Lab — Installation Guide
+# triage-llm-lab
 
-A three-VM isolated sandbox that combines Claude Code with REMnux analysis tools, Ghidra decompilation, and VirusTotal intelligence — all orchestrated through MCP servers from a clean Ubuntu host.
-
-| | |
-|---|---|
-| **Hypervisor** | VMware Workstation / Fusion |
-| **VMs** | Ubuntu 24.04 + REMnux + SIFT (Forensics) + Windows (future) |
-| **LLM** | Claude Code (Sonnet) |
+> AI-powered malware analysis and digital forensics lab — Claude Code orchestrating REMnux, SIFT Workstation, Ghidra, and VirusTotal over custom MCP servers in an isolated multi-VM environment.
 
 ---
 
-## Table of Contents
-
-1. [Lab Architecture](#01-lab-architecture)
-2. [Prerequisites](#02-prerequisites)
-3. [VM1 — Ubuntu 24.04 (LLM Host)](#03-vm1--ubuntu-2404-llm-host)
-4. [VM2 — REMnux (Analysis Machine)](#04-vm2--remnux-analysis-machine)
-5. [Network Configuration](#05-network-configuration)
-6. [SSH Key Setup](#06-ssh-key-setup)
-7. [remnux-ssh MCP Server](#07-remnux-ssh-mcp-server)
-8. [VirusTotal MCP Server](#08-virustotal-mcp-server)
-9. [Ghidra MCP (Docker Headless)](#09-ghidra-mcp-docker-headless)
-10. [REMnux Analysis Tools](#10-remnux-analysis-tools)
-11. [MCP Tool Groups](#11-mcp-tool-groups)
-12. [Analysis Workflows](#12-analysis-workflows)
-13. [Troubleshooting](#13-troubleshooting)
-14. [Security Notes](#14-security-notes)
-
----
-
-## 01. Lab Architecture
-
-Three VMs with strict network isolation. Only VM1 has internet access. Samples never touch the LLM host.
+## Architecture
 
 ```
-                    🌐 Internet / Anthropic API
-                            │
-   ┌─────────────────┐   SSH / Host-only    ┌─────────────────┐   SSH (future)   ┌─────────────────┐
-   │ VM1              │   192.168.56.0/24    │ VM2              │  Windows         │ VM3              │
-   │ Ubuntu 24.04     │ ───────────────────► │ REMnux           │  forensics       │ Windows 10       │
-   │ Claude Code +    │                      │ Analysis Tools + │ ───────────────► │ Forensic         │
-   │ MCP Servers      │                      │ Ghidra           │                  │ Analysis         │
-   │ NAT + Host-only  │                      │ Host-only only   │                  │ Host-only (future)│
-   └─────────────────┘                      └─────────────────┘                  └─────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│  Host Machine (macOS / Linux)                                            │
+│                                                                          │
+│  ┌────────────────────────────────────────────────────────────────────┐ │
+│  │  VMware Host-Only Network: 192.168.56.0/24                         │ │
+│  │                                                                    │ │
+│  │  ┌──────────────────┐    ┌──────────────────┐    ┌─────────────┐  │ │
+│  │  │  VM1 — Ubuntu    │    │  VM2 — REMnux    │    │  VM3 — SIFT │  │ │
+│  │  │  192.168.56.10   │    │  192.168.56.20   │    │ 192.168.56  │  │ │
+│  │  │                  │    │                  │    │    .30      │  │ │
+│  │  │  Claude Code     │◄──►│  Analysis Tools  │    │  Forensics  │  │ │
+│  │  │  MCP Servers     │    │  Ghidra (Docker) │    │  Volatility │  │ │
+│  │  │  VT API Key      │    │  Host-only NIC   │◄──►│  Sleuthkit  │  │ │
+│  │  └──────────────────┘    └──────────────────┘    └─────────────┘  │ │
+│  │          │                        │                                │ │
+│  │    remnux-ssh MCP           SSH tunnel                             │ │
+│  │    sift-ssh MCP             (port 8089)                            │ │
+│  │    virustotal MCP                                                  │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  VM4 — Windows 10 (192.168.56.40) — future dynamic analysis             │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
-> **ℹ️ Key principle:** VM1 (Ubuntu) is the only machine with internet access. Malware samples are transferred to REMnux via SCP and never executed on VM1. The LLM orchestrates analysis remotely over SSH.
+**VM roles:**
 
-| VM | OS | Role | Network | Internet |
-|----|----|------|---------|----------|
-| `VM1` | Ubuntu 24.04 LTS | Claude Code + MCP orchestration host | NAT + Host-only `192.168.56.10` | ✅ Yes |
-| `VM2` | REMnux (Ubuntu-based) | Static analysis, Ghidra, deobfuscation | Host-only only `192.168.56.20` | ❌ No |
-| `VM3` | Windows 10 | Forensic analysis (future) | Host-only only `192.168.56.30` | ❌ No |
+| VM | OS | IP | Role | Status |
+|----|----|----|------|--------|
+| VM1 | Ubuntu 24.04 | 192.168.56.10 | LLM host — Claude Code, MCP servers, API keys | Active |
+| VM2 | REMnux | 192.168.56.20 | Static analysis — malware tools, Ghidra Docker | Active |
+| VM3 | SIFT Workstation | 192.168.56.30 | DFIR — memory forensics, disk forensics, timelines | Active |
+| VM4 | Windows 10 | 192.168.56.40 | Dynamic analysis (sandbox) | Future |
 
 ---
 
-## 02. Prerequisites
+## Prerequisites
 
-Download everything before configuring the network. Both VMs need internet to install packages.
-
-> **⚠️ Important:** Complete all downloads and package installations while VMs are on NAT (internet access). Switch REMnux to host-only *only* after all tools are installed.
-
-### Host Machine Requirements
+### Hardware
 
 | Resource | Minimum | Recommended |
 |----------|---------|-------------|
 | RAM | 16 GB | 32 GB |
-| Storage | 100 GB free | 200 GB SSD |
-| CPU | 4 cores | 8 cores with VT-x |
-| Hypervisor | VMware Workstation Pro / Fusion | VMware Workstation Pro / Fusion |
+| Storage | 150 GB | 300 GB |
+| CPU cores | 8 | 12+ |
 
-### Downloads Required
+### Software
 
-- [ ] **Ubuntu 24.04 LTS ISO** — [ubuntu.com/download](https://ubuntu.com/download/desktop) — for VM1
-- [ ] **REMnux OVA** — [remnux.org](https://remnux.org) — pre-built VM with all analysis tools
-- [ ] **VMware Workstation / Fusion** — [vmware.com](https://www.vmware.com)
-- [ ] **Anthropic account** with Claude Pro, Max, Team, or Enterprise — needed for Claude Code authentication
-- [ ] **VirusTotal API key** (Premium recommended for file downloads) — [virustotal.com](https://www.virustotal.com)
-
-### VM Allocation
-
-| VM | RAM | vCPU | Disk |
-|----|-----|------|------|
-| VM1 — Ubuntu | 4 GB | 2 | 40 GB |
-| VM2 — REMnux | 4 GB | 2 | 60 GB |
-| VM3 — SIFT | 4 GB | 2 | 60 GB |
-| VM4 — Windows (future) | 4 GB | 2 | 60 GB |
+- VMware Fusion (macOS) or VMware Workstation (Linux/Windows)
+- [REMnux OVA](https://remnux.org/) — import as VM2
+- [SIFT Workstation OVA](https://www.sans.org/tools/sift-workstation/) — import as VM3
+- Node.js ≥ 20 (on VM1)
+- TypeScript (`npm install -g typescript`) (on VM1)
+- Claude Code CLI (on VM1)
+- VirusTotal API key (free tier works for most tools)
 
 ---
 
-## 03. VM1 — Ubuntu 24.04 (LLM Host)
+## VM Setup
 
-Install Ubuntu 24.04, then install Claude Code and all MCP server dependencies. Keep VM1 on NAT throughout this section.
-
-> **ℹ️** VM1 network adapter: set to **NAT** for now. You will add a second host-only adapter after installation.
-
-### Step 1 — System Update
+### VM1 — Ubuntu 24.04 (LLM Host)
 
 ```bash
-# Update system packages
+# Update and install essentials
 sudo apt update && sudo apt upgrade -y
-sudo apt install -y curl git build-essential python3 python3-pip zip unzip
-```
+sudo apt install -y openssh-server curl git build-essential
 
-### Step 2 — Install Claude Code
-
-Use the official native installer — no Node.js dependency required.
-
-```bash
-# Install Claude Code via native installer
-curl -fsSL https://claude.ai/install.sh | bash
-
-# Verify installation
-claude --version
-claude doctor
-```
-
-### Step 3 — Authenticate Claude Code
-
-Authenticate using your corporate or personal Claude account via device code flow.
-
-```bash
-# Launch Claude — follow the device code prompt
-claude
-
-# When prompted:
-# 1. Select "Sign in with Claude.ai"
-# 2. Open the displayed URL in your browser
-# 3. Enter the device code
-# 4. Sign in with your corporate/personal account
-```
-
-### Step 4 — Install Node.js (for MCP servers)
-
-```bash
-# Install Node.js 20 LTS
+# Install Node.js 20
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt install -y nodejs
 
-# Verify
-node --version   # v20.x.x
-npm --version    # 10.x.x
-```
+# Install TypeScript globally
+npm install -g typescript
 
-### Step 5 — Store API Keys Securely
+# Install Claude Code CLI
+npm install -g @anthropic/claude-code
 
-```bash
-# Create secure secrets file
-mkdir -p ~/.config/malware-lab
-cat > ~/.config/malware-lab/secrets.env << 'EOF'
-VIRUSTOTAL_API_KEY=paste_your_vt_key_here
-EOF
-
-# Lock down permissions
-chmod 600 ~/.config/malware-lab/secrets.env
-
-# Auto-load on login
-echo 'source ~/.config/malware-lab/secrets.env' >> ~/.bashrc
-source ~/.bashrc
-```
-
-### Step 6 — Create Working Directory
-
-```bash
+# Create working directory
 mkdir -p ~/malware-analysis ~/downloads
+```
 
-# Create CLAUDE.md to give Claude context about the lab
-cat > ~/malware-analysis/CLAUDE.md << 'EOF'
-# Malware Analysis Lab
+**Static IP configuration** (`/etc/netplan/01-netcfg.yaml`):
 
-## Startup
-At the start of every session, list all available tools from remnux-ssh MCP grouped
-by their category, then list all available virustotal MCP tools with a short description.
-After showing the full list, wait for the next instruction.
+```yaml
+network:
+  version: 2
+  ethernets:
+    ens33:          # NAT adapter — internet access
+      dhcp4: true
+    ens38:          # Host-only adapter
+      dhcp4: no
+      addresses:
+        - 192.168.56.10/24
+```
 
-## REMnux VM
-- Host: 192.168.56.20
-- User: remnux
-- SSH key: /home/tasox/.ssh/remnux_key
-- SSH command: ssh -i /home/tasox/.ssh/remnux_key remnux@192.168.56.20
+```bash
+sudo netplan apply
+```
 
-## Directories
-- Intake (zip files):  /home/remnux/intake/
-- Samples (unzipped): /home/remnux/samples/
-- Ghidra container maps /home/remnux/samples/ → /data/
+---
+
+### VM2 — REMnux (Static Analysis)
+
+```bash
+# Enable SSH server
+sudo systemctl enable ssh --now
+
+# Set static IP (edit /etc/netplan/... for host-only NIC)
+# Host-only NIC: 192.168.56.20/24
+
+# Verify core tools
+file --version && strings --version && xxd --version
+die --version    # Detect-It-Easy
+floss --version
+capa --version
+```
+
+**SSH key setup from VM1:**
+
+```bash
+# On VM1 — generate dedicated key pair
+ssh-keygen -t ed25519 -f ~/.ssh/remnux_key -C "remnux-mcp" -N ""
+
+# Copy public key to REMnux
+ssh-copy-id -i ~/.ssh/remnux_key.pub remnux@192.168.56.20
+
+# Test
+ssh -i ~/.ssh/remnux_key remnux@192.168.56.20 "uname -a"
+```
+
+---
+
+### VM3 — SIFT Workstation (Digital Forensics)
+
+**Default credentials:** `sansforensics` / `forensics`
+
+```bash
+# On SIFT — enable copy/paste (VMware tools)
+sudo apt install -y open-vm-tools open-vm-tools-desktop
+
+# Enable SSH server
+sudo systemctl enable ssh --now
+
+# Verify core forensic tools
+vol -h 2>/dev/null | head -3       # Volatility3
+fls --version                       # Sleuthkit
+log2timeline.py --version           # Plaso
+autopsy --version 2>/dev/null || echo "check /opt/autopsy"
+bulk_extractor --version
+foremost -V
+rip.pl --help 2>&1 | head -3
+dcfldd --version
+ssdeep -V
+
+# Install additional tools
+sudo apt install -y sleuthkit yara python3-yara dcfldd hashdeep ssdeep \
+  exiftool libewf2t64 afflib-tools python3-registry
+pip3 install construct dissect.cstruct --break-system-packages
+
+# Create cases directory structure
+sudo mkdir -p /cases/carved /cases/dumps /cases/recovered
+sudo chown -R sansforensics:sansforensics /cases
+```
+
+**Static IP configuration** (`/etc/netplan/01-netcfg.yaml`):
+
+```yaml
+network:
+  version: 2
+  ethernets:
+    ens33:
+      dhcp4: true
+    ens38:          # Host-only adapter
+      dhcp4: no
+      addresses:
+        - 192.168.56.30/24
+```
+
+```bash
+sudo netplan apply
+```
+
+**SSH key setup from VM1:**
+
+```bash
+# On VM1 — generate dedicated key for SIFT
+ssh-keygen -t ed25519 -f ~/.ssh/sift_key -C "sift-mcp" -N ""
+
+# Copy to SIFT
+ssh-copy-id -i ~/.ssh/sift_key.pub sansforensics@192.168.56.30
+
+# Test
+ssh -i ~/.ssh/sift_key sansforensics@192.168.56.30 "uname -a"
+```
+
+---
 
 ## MCP Servers
-- remnux-ssh  → all analysis tools on REMnux (triage, static, deobfuscation, Ghidra, .NET, ELF, Python, Office, MSI)
-- virustotal  → hash lookups, detections, file reports, sample downloads (password: infected)
-- ghidra-mcp → NOT used directly; use remnux-ssh ghidra_* tools instead
 
-## Sample Transfer
-To copy a sample to REMnux:
-scp -i /home/tasox/.ssh/remnux_key <local_file> remnux@192.168.56.20:/home/remnux/intake/
+### remnux-ssh MCP
 
-## Analysis Workflow
-1. Download sample via virustotal MCP → ~/downloads/sample.zip
-2. Transfer: scp -i /home/tasox/.ssh/remnux_key ~/downloads/sample.zip remnux@192.168.56.20:/home/remnux/intake/
-3. Unzip: remnux-ssh intake_sample with zip_path and password (default: infected)
-4. Triage: use the appropriate triage_* tool based on file type
-5. Deep analysis: ghidra_load_sample → ghidra_* tools
-6. Intelligence: virustotal get_file_report with the sample hash
-
-## Rules
-- Never store or execute samples on VM1 (this machine)
-- Samples only live in /home/remnux/samples/ on REMnux
-- Always revert REMnux snapshot after each analysis session
-EOF
-```
-
-### Step 7 — Create the `lab` Shortcut
-
-This shell function starts a Claude session from the analysis directory and automatically displays all available tools at startup.
+Gives Claude direct access to REMnux analysis tools over SSH.
 
 ```bash
-# Add lab function to ~/.bashrc
-cat >> ~/.bashrc << 'EOF'
-
-lab() {
-  cd ~/malware-analysis
-  echo "Loading malware analysis lab..."
-  claude "Show all available tools for this malware analysis lab grouped by category:
-1. List all tools from remnux-ssh MCP grouped by their [CATEGORY] tag
-2. List all tools from virustotal MCP with a short description of each
-After showing the full list, wait for my next instruction."
-}
-EOF
-
-source ~/.bashrc
-
-# Start the lab — shows all tools then waits for your prompt
-lab
-```
-
-> **✅** From now on, type `lab` from anywhere to start an analysis session. Claude will automatically list all available tools grouped by category before waiting for your first prompt.
-
----
-
-## 04. VM2 — REMnux (Analysis Machine)
-
-Import the REMnux OVA into VMware, then install additional tools while NAT is still active. Switch to host-only after all tools are installed.
-
-> **⚠️** Keep REMnux on **NAT** during this entire section. You will switch to host-only in the Network Configuration section.
-
-### Step 1 — Import REMnux OVA
-
-In VMware: **File → Open** → select the REMnux `.ova` file → Import. Allocate 4 GB RAM and 2 vCPUs.
-
-### Step 2 — Install SSH Server
-
-```bash
-sudo apt update
-sudo apt install -y openssh-server
-sudo systemctl enable ssh
-sudo systemctl start ssh
-
-# Verify SSH is listening
-sudo ss -tlnp | grep 22
-```
-
-### Step 3 — Install Additional Analysis Tools
-
-```bash
-# Python analysis tools
-pip3 install vipermonkey uncompyle6 --break-system-packages
-
-# JavaScript deobfuscation
-npm install -g synchrony js-beautify
-
-# Verify key tools are available
-which olevba oleid mraptor diec floss capa
-which readelf objdump nm binwalk exiftool
-which js-beautify synchrony
-```
-
-### Step 4 — Install Docker (for Ghidra MCP)
-
-```bash
-# Docker is typically pre-installed on REMnux — verify:
-docker --version
-
-# If not installed:
-sudo apt install -y docker.io
-sudo systemctl enable docker
-sudo usermod -aG docker $USER
-newgrp docker
-```
-
-### Step 5 — Create Sample Directories
-
-```bash
-mkdir -p /home/remnux/samples
-mkdir -p /home/remnux/intake
-mkdir -p /home/remnux/ghidra-scripts
-```
-
----
-
-## 05. Network Configuration
-
-Configure VMware network adapters and static IPs. Only do this after all tools are installed on both VMs.
-
-### VMware Adapter Configuration
-
-| VM | Adapter 1 | Adapter 2 |
-|----|-----------|-----------|
-| VM1 — Ubuntu | NAT — internet access | Host-only VMnet1 — lab network |
-| VM2 — REMnux | Host-only VMnet1 — lab network only | — |
-
-In VMware: **VM → Settings → Network Adapter**. For VM1, add a second adapter via **Add → Network Adapter → Host-only**.
-
-### Assign Static IPs on VM1 (Ubuntu)
-
-```bash
-# Find the host-only interface name
-ip a
-# Look for the second adapter (not your NAT one) — typically ens36 or similar
-
-# Edit netplan config
-sudo nano /etc/netplan/01-network-manager-all.yaml
-```
-
-`/etc/netplan/01-network-manager-all.yaml` (VM1):
-
-```yaml
-network:
-  version: 2
-  ethernets:
-    ens33:           # NAT adapter — keep as DHCP
-      dhcp4: true
-    ens36:           # Host-only adapter — static IP
-      dhcp4: no
-      addresses: [192.168.56.10/24]
-```
-
-```bash
-sudo netplan apply
-```
-
-### Assign Static IP on VM2 (REMnux)
-
-`/etc/netplan/01-network-manager-all.yaml` (VM2):
-
-```yaml
-network:
-  version: 2
-  ethernets:
-    ens33:           # Host-only adapter — static IP
-      dhcp4: no
-      addresses: [192.168.56.20/24]
-```
-
-```bash
-sudo netplan apply
-
-# Verify connectivity from VM1
-ping -c 3 192.168.56.10   # ping VM1 from VM2
-```
-
-> **✅** Both VMs should be able to ping each other on `192.168.56.0/24`. VM1 should also still have internet access via its NAT adapter.
-
----
-
-## 06. SSH Key Setup
-
-Generate SSH keys on VM1 and copy them to REMnux for passwordless access. This is required for the MCP servers to communicate.
-
-**1. Generate SSH key on VM1**
-
-```bash
-ssh-keygen -t ed25519 -f ~/.ssh/remnux_key -N "" -C "vm1-to-remnux"
-```
-
-**2. Copy public key to REMnux**
-
-```bash
-ssh-copy-id -i ~/.ssh/remnux_key.pub remnux@192.168.56.20
-```
-
-**3. Create SSH config for convenience** (`~/.ssh/config` on VM1)
-
-```
-Host remnux
-    HostName 192.168.56.20
-    User remnux
-    IdentityFile ~/.ssh/remnux_key
-    StrictHostKeyChecking no
-```
-
-**4. Test connectivity**
-
-```bash
-ssh remnux "uname -a && echo SSH OK"
-```
-
----
-
-## 07. remnux-ssh MCP Server
-
-Build and register the custom MCP server that lets Claude Code run commands on REMnux over SSH.
-
-### Build the MCP Server
-
-```bash
-# Create MCP directory
+# On VM1 — create project
 mkdir -p ~/mcp/remnux-mcp/src
-
-# Install TypeScript dependencies
 cd ~/mcp/remnux-mcp
+
 npm init -y
 npm install @modelcontextprotocol/sdk ssh2 zod
 npm install -D typescript @types/node @types/ssh2
+npm pkg set type="module"
 
-# Configure TypeScript
+# Create tsconfig.json
 cat > tsconfig.json << 'EOF'
 {
   "compilerOptions": {
@@ -429,52 +236,11 @@ cat > tsconfig.json << 'EOF'
 }
 EOF
 
-# Add "type": "module" to package.json
-npm pkg set type="module"
-```
-
-Place the `index.ts` source file into `~/mcp/remnux-mcp/src/index.ts`, then build:
-
-```bash
-cd ~/mcp/remnux-mcp
+# Place src/index.ts, then build
 npx tsc
-
-# Verify build output
-ls build/
 ```
 
-### Create Ghidra Helper Scripts on REMnux
-
-These scripts solve SSH quoting issues when calling the Ghidra Docker container.
-
-```bash
-ssh remnux 'python3 -c "
-import os
-os.makedirs(\"/home/remnux/ghidra-scripts\", exist_ok=True)
-
-get_script = \"\"\"#!/bin/sh
-echo \"curl -s -H \x27Authorization: Bearer ghidra-lab-token\x27 http://localhost:8089\$1\" > /tmp/gh_cmd.sh
-docker cp /tmp/gh_cmd.sh ghidra-mcp:/tmp/gh_cmd.sh
-docker exec ghidra-mcp sh /tmp/gh_cmd.sh
-\"\"\"
-
-post_script = \"\"\"#!/bin/sh
-echo \x27{\"file\":\"\x27\$1\x27\"}\x27 > /tmp/gh_body.json
-echo \"curl -s -X POST -H \x27Authorization: Bearer ghidra-lab-token\x27 -H \x27Content-Type: application/json\x27 -d @/tmp/gh_body.json http://localhost:8089/load_program\" > /tmp/gh_post_cmd.sh
-docker cp /tmp/gh_body.json ghidra-mcp:/tmp/gh_body.json
-docker cp /tmp/gh_post_cmd.sh ghidra-mcp:/tmp/gh_post_cmd.sh
-docker exec ghidra-mcp sh /tmp/gh_post_cmd.sh
-\"\"\"
-
-with open(\"/home/remnux/ghidra-scripts/ghidra-get.sh\", \"w\") as f: f.write(get_script)
-with open(\"/home/remnux/ghidra-scripts/ghidra-post.sh\", \"w\") as f: f.write(post_script)
-os.chmod(\"/home/remnux/ghidra-scripts/ghidra-get.sh\", 0o755)
-os.chmod(\"/home/remnux/ghidra-scripts/ghidra-post.sh\", 0o755)
-print(\"Scripts written\")
-"'
-```
-
-### Register remnux-ssh with Claude Code
+**Register with Claude Code:**
 
 ```bash
 claude mcp add remnux-ssh \
@@ -485,86 +251,53 @@ claude mcp add remnux-ssh \
   --private-key /home/$USER/.ssh/remnux_key
 
 # Verify
-claude mcp list | grep remnux-ssh
+claude mcp list | grep remnux
 ```
 
 ---
 
-## 08. VirusTotal MCP Server
+### Ghidra MCP (Docker on REMnux)
 
-Set up the VirusTotal MCP for hash lookups, file reports, and sample downloads.
+Headless Ghidra for deep binary reverse engineering, accessed over SSH tunnel.
 
-> **ℹ️** File download requires a **VirusTotal Premium API key**. Hash lookups and reports work with a free key.
+**Step 1 — Build Docker image on VM1:**
 
 ```bash
-# Clone and build the VT MCP
-git clone https://github.com/BurtTheCoder/mcp-virustotal ~/mcp/mcp-virustotal
-cd ~/mcp/mcp-virustotal
-npm install
-npm run build
+# On VM1
+mkdir -p ~/ghidra-mcp-build
+cd ~/ghidra-mcp-build
 
-# Register with Claude Code (loads API key from secrets file)
-source ~/.config/malware-lab/secrets.env
-claude mcp add virustotal \
-  --scope user \
-  -e VIRUSTOTAL_API_KEY=$VIRUSTOTAL_API_KEY \
-  -- node /home/$USER/mcp/mcp-virustotal/build/index.js
+# Build the headless Ghidra MCP image
+docker build -t ghidra-mcp-headless:latest .
 
-# Test — EICAR hash (safe to query)
-# Open a claude session and run:
-# "Use virustotal MCP to look up hash: 44d88612fea8a8f36de82e1278abb02f"
+# Export as tar for transfer to REMnux
+docker save ghidra-mcp-headless:latest -o ghidra-mcp-headless.tar
 ```
 
----
-
-## 09. Ghidra MCP (Docker Headless)
-
-Run GhidraMCP as a headless Docker container on REMnux for automated binary analysis. The container is built on VM1 (which has internet) and transferred to REMnux.
-
-### Step 1 — Build Docker Image on VM1
+**Step 2 — Transfer image to REMnux:**
 
 ```bash
-# Install Docker on VM1
-sudo apt install -y docker.io
-sudo systemctl start docker
-sudo usermod -aG docker $USER && newgrp docker
-
-# Clone ghidra-mcp repo
-git clone https://github.com/bethington/ghidra-mcp ~/mcp/ghidra-mcp
-cd ~/mcp/ghidra-mcp
-
-# Build the Docker image (takes 5-10 minutes)
-docker build -t ghidra-mcp-headless:latest -f docker/Dockerfile .
-
-# Export image to tar
-docker save ghidra-mcp-headless:latest -o /tmp/ghidra-mcp-headless.tar
-ls -lh /tmp/ghidra-mcp-headless.tar
+scp -i ~/.ssh/remnux_key ghidra-mcp-headless.tar remnux@192.168.56.20:/home/remnux/
 ```
 
-### Step 2 — Transfer Image to REMnux
+**Step 3 — Load and run on REMnux:**
 
 ```bash
-scp -i ~/.ssh/remnux_key /tmp/ghidra-mcp-headless.tar remnux@192.168.56.20:/home/remnux/
-```
-
-### Step 3 — Load and Run Container on REMnux
-
-```bash
-# Load image
+# On VM2 — REMnux
 docker load -i /home/remnux/ghidra-mcp-headless.tar
 
 # Create run script
 python3 -c "
 import os
 script = '''#!/bin/bash
-docker run -d --name ghidra-mcp --memory 2g \
-  -p 127.0.0.1:8089:8089 \
-  -v /home/remnux/samples:/data \
-  -v ghidra-projects:/projects \
-  -e GHIDRA_MCP_PORT=8089 \
-  -e GHIDRA_MCP_BIND_ADDRESS=0.0.0.0 \
-  -e GHIDRA_MCP_AUTH_TOKEN=ghidra-lab-token \
-  -e JAVA_OPTS=-Xmx2g \
+docker run -d --name ghidra-mcp --memory 2g \\
+  -p 127.0.0.1:8089:8089 \\
+  -v /home/remnux/samples:/data \\
+  -v ghidra-projects:/projects \\
+  -e GHIDRA_MCP_PORT=8089 \\
+  -e GHIDRA_MCP_BIND_ADDRESS=0.0.0.0 \\
+  -e GHIDRA_MCP_AUTH_TOKEN=ghidra-lab-token \\
+  -e JAVA_OPTS=-Xmx2g \\
   ghidra-mcp-headless:latest
 '''
 with open('/home/remnux/run-ghidra-mcp.sh', 'w') as f:
@@ -573,105 +306,171 @@ os.chmod('/home/remnux/run-ghidra-mcp.sh', 0o755)
 print('Script written')
 "
 
-# Start the container
+# Start container
 /home/remnux/run-ghidra-mcp.sh
 
-# Verify it's healthy (~20 seconds startup)
+# Verify (~20s startup)
 sleep 20
 docker exec ghidra-mcp curl -s http://localhost:8089/get_version
 ```
 
-> **✅** Expected output: `{"plugin_version": "5.13.1-headless", "plugin_name": "GhidraMCP Headless", "mode": "headless"}`
+Expected: `{"plugin_version": "5.13.1-headless", "plugin_name": "GhidraMCP Headless", "mode": "headless"}`
 
 ---
 
-## 10. REMnux Analysis Tools
+### sift-ssh MCP
 
-Complete list of analysis tools available on REMnux, organized by category.
+Gives Claude direct access to SIFT forensic tools over SSH — same pattern as remnux-ssh.
+
+```bash
+# On VM1
+mkdir -p ~/mcp/sift-mcp/src
+cd ~/mcp/sift-mcp
+
+npm init -y
+npm install @modelcontextprotocol/sdk ssh2 zod
+npm install -D typescript @types/node @types/ssh2
+npm pkg set type="module"
+
+cat > tsconfig.json << 'EOF'
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "build",
+    "rootDir": "src",
+    "strict": false,
+    "esModuleInterop": true,
+    "skipLibCheck": true
+  },
+  "include": ["src"]
+}
+EOF
+
+# Place src/index.ts, then build
+npx tsc
+```
+
+**Register with Claude Code:**
+
+```bash
+claude mcp add sift-ssh \
+  --scope user \
+  -- node /home/$USER/mcp/sift-mcp/build/index.js \
+  --host 192.168.56.30 \
+  --username sansforensics \
+  --private-key /home/$USER/.ssh/sift_key
+
+# Verify
+claude mcp list | grep sift
+```
+
+**Test:**
+
+```
+Use sift-ssh run_command to run: uname -a && vol -h 2>/dev/null | head -3
+```
+
+---
+
+### virustotal MCP
+
+```bash
+# On VM1 — store API key
+mkdir -p ~/.config/malware-lab
+echo "VT_API_KEY=your_key_here" > ~/.config/malware-lab/secrets.env
+
+# Register virustotal MCP
+claude mcp add virustotal \
+  --scope user \
+  --env VT_API_KEY \
+  -- node /home/$USER/mcp/virustotal-mcp/build/index.js
+```
+
+---
+
+## REMnux Analysis Tools
 
 ### Static Analysis
 
-| Tool | Description | Source |
-|------|-------------|--------|
-| `file` | Identify file type by magic bytes | built-in |
-| `strings` | Extract printable strings | built-in |
-| `xxd` | Hex dump files | built-in |
-| `diec` / `die` | Detect packers, compilers, protectors | pre-installed |
-| `FLOSS` | Extract obfuscated + stack strings | pre-installed |
-| `CAPA` | MITRE ATT&CK capability detection | pre-installed |
-| `pescanner` | PE header analysis | pre-installed |
-| `exiftool` | File metadata extraction | pre-installed |
-| `binwalk` | Embedded file extraction | pre-installed |
-| `upx` | UPX packer detection / unpacking | pre-installed |
+| Tool | Description |
+|------|-------------|
+| `file` | Identify file type by magic bytes |
+| `strings` | Extract printable strings |
+| `xxd` | Hex dump files |
+| `diec` / `die` | Detect packers, compilers, protectors |
+| `FLOSS` | Extract obfuscated + stack strings |
+| `CAPA` | MITRE ATT&CK capability detection |
+| `pescanner` | PE header analysis |
+| `exiftool` | File metadata extraction |
+| `binwalk` | Embedded file extraction |
+| `upx` | UPX packer detection / unpacking |
 
 ### Office Document Analysis
 
-| Tool | Description | Source |
-|------|-------------|--------|
-| `olevba` | VBA macro extraction and analysis | oletools |
-| `oleid` | OLE file indicator detection | oletools |
-| `oledump` | OLE stream dumping | oletools |
-| `mraptor` | Malicious macro detection | oletools |
-| `ViperMonkey` | VBA macro emulation | install |
+| Tool | Description |
+|------|-------------|
+| `olevba` | VBA macro extraction and analysis |
+| `oleid` | OLE file indicator detection |
+| `oledump` | OLE stream dumping |
+| `mraptor` | Malicious macro detection |
+| `ViperMonkey` | VBA macro emulation |
 
 ### Script Deobfuscation
 
-| Tool | Description | Source |
-|------|-------------|--------|
-| `synchrony` | JavaScript deobfuscation (obfuscator.io) | install |
-| `js-beautify` | JavaScript formatting | install |
+| Tool | Description |
+|------|-------------|
+| `synchrony` | JavaScript deobfuscation (obfuscator.io) |
+| `js-beautify` | JavaScript formatting |
 
 ### ELF / Linux Analysis
 
-| Tool | Description | Source |
-|------|-------------|--------|
-| `readelf` | ELF header and section analysis | built-in |
-| `objdump` | Disassembly and symbol inspection | built-in |
-| `nm` | Symbol table listing | built-in |
-| `ldd` | Shared library dependencies | built-in |
-| `strace` / `ltrace` | System and library call tracing | pre-installed |
+| Tool | Description |
+|------|-------------|
+| `readelf` | ELF header and section analysis |
+| `objdump` | Disassembly and symbol inspection |
+| `nm` | Symbol table listing |
+| `ldd` | Shared library dependencies |
+| `strace` / `ltrace` | System and library call tracing |
 
 ### Python Malware
 
-| Tool | Description | Source |
-|------|-------------|--------|
-| `pyinstxtractor-ng` | Unpack PyInstaller bundles | pre-installed |
-| `uncompyle6` | Decompile Python .pyc bytecode | install |
+| Tool | Description |
+|------|-------------|
+| `pyinstxtractor-ng` | Unpack PyInstaller bundles |
+| `uncompyle6` | Decompile Python .pyc bytecode |
 
 ### Windows Installer
 
-| Tool | Description | Source |
-|------|-------------|--------|
-| `msiextract` | Extract MSI file contents | pre-installed |
-| `msidump` | Dump MSI database tables | pre-installed |
-| `7z` / `unzip` | Extract MSIX/AppX packages | pre-installed |
-| `cabextract` | Extract Cabinet files | pre-installed |
+| Tool | Description |
+|------|-------------|
+| `msiextract` | Extract MSI file contents |
+| `msidump` | Dump MSI database tables |
+| `7z` / `unzip` | Extract MSIX/AppX packages |
+| `cabextract` | Extract Cabinet files |
 
 ### .NET Assembly Analysis
 
-| Tool | Description | Source |
-|------|-------------|--------|
-| `ilspycmd` | Decompile .NET assemblies to C# source | pre-installed |
-| `monodis` | Disassemble .NET IL bytecode, extract user strings | pre-installed |
-| `pedump` | PE/CLI header and metadata table analysis | pre-installed |
-| `dnfile` | Python library for .NET metadata parsing — assembly refs, type defs, method names | install |
-| `pefile` | Python PE structure parsing library | install |
-| `dotnet runtime` | Microsoft .NET 8.0 runtime (required by ilspycmd) | pre-installed |
-
-### Install .NET Python Libraries
+| Tool | Description |
+|------|-------------|
+| `ilspycmd` | Decompile .NET assemblies to C# source |
+| `monodis` | Disassemble .NET IL bytecode, extract user strings |
+| `pedump` | PE/CLI header and metadata table analysis |
+| `dnfile` | Python library for .NET metadata parsing |
+| `pefile` | Python PE structure parsing library |
 
 ```bash
+# Install .NET Python libraries (REMnux, NAT enabled temporarily)
 pip3 install dnfile pefile --break-system-packages
-
-# Verify
 python3 -c "import dnfile, pefile; print('dnfile', dnfile.__version__, 'pefile ok')"
 ```
 
 ---
 
-## 11. MCP Tool Groups
+## MCP Tool Groups
 
-The remnux-ssh MCP exposes tools organized into groups. Each group tag appears in the tool description so Claude picks the right tool automatically.
+### remnux-ssh Tool Groups
 
 | Group | Tag | Tools | Use when |
 |-------|-----|-------|----------|
@@ -684,13 +483,40 @@ The remnux-ssh MCP exposes tools organized into groups. Each group tag appears i
 | ELF Analysis | `[ELF]` | `elf_analyze`, `elf_imports`, `elf_sections`, `elf_iocs` | Linux ELF binaries |
 | Python Malware | `[PYTHON]` | `pyinstaller_extract`, `python_decompile`, `python_analyze` | Compiled Python samples |
 | Ghidra | `[GHIDRA]` | `ghidra_version`, `ghidra_load_sample`, `ghidra_list_functions`, `ghidra_decompile`, `ghidra_list_imports`, `ghidra_list_strings`, `ghidra_detect_malware`, `ghidra_extract_iocs` | Deep reverse engineering |
-| .NET Assembly | `[DOTNET]` | `dotnet_decompile`, `dotnet_il_disasm`, `dotnet_pe_headers`, `dotnet_metadata`, `dotnet_strings`, `dotnet_resources`, `triage_dotnet` | C#, VB.NET, F# compiled assemblies |
+| .NET Assembly | `[DOTNET]` | `dotnet_decompile`, `dotnet_il_disasm`, `dotnet_pe_headers`, `dotnet_metadata`, `dotnet_strings`, `dotnet_resources`, `triage_dotnet` | C#, VB.NET, F# assemblies |
+
+### sift-ssh Tool Groups
+
+| Group | Tag | Tools | Use when |
+|-------|-----|-------|----------|
+| Utility | `[UTILITY]` | `run_command`, `list_cases`, `hash_file` | Case management, hashing evidence |
+| Memory Forensics | `[MEMORY]` | `memory_info`, `memory_pslist`, `memory_netscan`, `memory_malfind`, `memory_cmdline`, `memory_dlllist`, `memory_handles`, `memory_registry`, `memory_dump_process`, `triage_memory` | Windows/Linux memory dumps (.dmp, .raw) |
+| Disk Forensics | `[DISK]` | `disk_info`, `disk_list_files`, `disk_recover_files`, `disk_extract_file`, `triage_disk` | Disk images (.dd, .E01) |
+| Timeline Analysis | `[TIMELINE]` | `timeline_create`, `timeline_filter`, `timeline_search` | Super-timeline creation and investigation |
+| Artifact Extraction | `[ARTIFACT]` | `extract_artifacts`, `carve_files`, `forensic_copy` | Bulk extraction, file carving, forensic imaging |
+| Registry Forensics | `[REGISTRY]` | `registry_analyze`, `registry_autoruns`, `registry_useractivity` | Windows registry hive analysis |
+| Triage | `[TRIAGE]` | `triage_case`, `triage_memory`, `triage_disk` | First look at any new evidence file |
+
+### VirusTotal MCP Tools
+
+| Tool | Input | Description | Tier |
+|------|-------|-------------|------|
+| `get_file_report` | MD5 / SHA1 / SHA256 | Full detection report — AV verdicts, sandbox scores, metadata | Free |
+| `get_file_behavior` | SHA256 | Dynamic analysis — network connections, registry changes, dropped files | Free |
+| `get_file_relationship` | SHA256 + relationship | Related files, dropped files, contacted IPs/domains, execution parents | Free |
+| `get_url_report` | URL | URL reputation, category, detections | Free |
+| `get_ip_report` | IP address | IP reputation, ASN, country, associated files and URLs | Free |
+| `get_domain_report` | Domain | Domain reputation, WHOIS, DNS history, associated malware | Free |
+| `search` | VTI query string | Advanced search — e.g. `type:peexe tag:signed` | Free |
+| `download_file` | SHA256 + output path | Download as password-protected zip (password: `infected`) to VM1 | Premium |
+
+> `download_file` saves to `~/downloads/` on VM1. Always transfer to REMnux via `scp` before unzipping — never extract samples on VM1.
 
 ---
 
-## 12. Analysis Workflows
+## Analysis Workflows
 
-Standard prompts to use with Claude Code for common analysis scenarios. Run these from the `~/malware-analysis` directory.
+Run these Claude Code prompts from `~/malware-analysis` on VM1.
 
 ### Workflow 1 — Full PE Sample Analysis
 
@@ -754,52 +580,84 @@ Analyze the .NET sample at /home/remnux/samples/agent.exe:
 6. Summarize: obfuscator used, capabilities, IOCs, verdict
 ```
 
-### VirusTotal MCP — Available Tools
+### Workflow 6 — Memory Forensics
 
-These tools are available via the `virustotal` MCP in any Claude session started with `lab`.
+```
+Analyze the memory dump at /cases/memory.dmp on SIFT:
 
-| Tool | Input | Description | API tier |
-|------|-------|-------------|----------|
-| `get_file_report` | MD5 / SHA1 / SHA256 | Full detection report — AV verdicts, sandbox scores, community ratings, file metadata | Free |
-| `get_file_behavior` | SHA256 | Dynamic analysis summary — network connections, registry changes, dropped files | Free |
-| `get_file_relationship` | SHA256 + relationship type | Related files, dropped files, contacted IPs/domains, execution parents | Free |
-| `get_url_report` | URL | URL reputation, category, detections, last analysis results | Free |
-| `get_ip_report` | IP address | IP reputation, ASN, country, associated files and URLs | Free |
-| `get_domain_report` | Domain | Domain reputation, WHOIS, DNS history, associated malware | Free |
-| `search` | VTI query string | Advanced search — supports VTI modifiers e.g. `type:peexe tag:signed` | Free |
-| `download_file` | SHA256 + output path | Download sample as password-protected zip (password: `infected`) to VM1 | Premium |
+1. Use sift-ssh triage_memory on /cases/memory.dmp
+2. Identify any suspicious processes from pslist (unknown names, unusual paths)
+3. Use sift-ssh memory_malfind to find injected code
+4. For any suspicious PIDs found, use sift-ssh memory_cmdline and memory_dlllist
+5. Use sift-ssh memory_netscan to identify C2 connections
+6. Cross-reference any IPs/domains with virustotal
+7. Use sift-ssh memory_dump_process to extract suspicious process for static analysis
+8. Summarize: compromised processes, IOCs, attacker activity
+```
 
-> **ℹ️** The `download_file` tool saves the sample to `~/downloads/` on VM1 as a zip. Always transfer it to REMnux via `scp` before unzipping — never extract samples directly on VM1.
+### Workflow 7 — Disk Image Forensics
+
+```
+Investigate the disk image at /cases/disk.dd on SIFT:
+
+1. Use sift-ssh hash_file to verify evidence integrity
+2. Use sift-ssh triage_disk to get partition layout and filesystem info
+3. Use sift-ssh disk_list_files to browse the file system
+4. Use sift-ssh timeline_create to build a super-timeline
+5. Use sift-ssh timeline_search to find activity around the incident timeframe
+6. Use sift-ssh carve_files to recover deleted executables
+7. Use sift-ssh extract_artifacts for bulk IOC extraction
+8. Transfer any carved executables to REMnux for static analysis
+9. Summarize: timeline of events, suspicious files, IOCs
+```
+
+### The `lab` Shortcut
+
+Add to `~/.bashrc` on VM1 to start Claude with all tools listed at startup:
+
+```bash
+lab() {
+  cd ~/malware-analysis
+  echo "Loading malware analysis lab..."
+  claude "Show all available tools for this malware analysis lab grouped by category:
+1. List all tools from remnux-ssh MCP grouped by their [CATEGORY] tag
+2. List all tools from sift-ssh MCP grouped by their [CATEGORY] tag
+3. List all tools from virustotal MCP with a short description of each
+After showing the full list, wait for my next instruction."
+}
+```
 
 ---
 
-## 13. Troubleshooting
+## Troubleshooting
 
 | Issue | Cause | Fix |
 |-------|-------|-----|
-| SSH connection refused | SSH service not running or wrong IP | Run `sudo systemctl start ssh` on REMnux. Verify IP with `ip a`. |
+| SSH connection refused | SSH service not running or wrong IP | Run `sudo systemctl start ssh` on REMnux/SIFT. Verify IP with `ip a`. |
 | MCP shows "Failed to connect" | Node.js path wrong or build not compiled | Run `npx tsc` in `~/mcp/remnux-mcp`. Re-register with `claude mcp remove` then `add`. |
 | Ghidra returns "Unauthorized" | Auth token not passed correctly through SSH layers | Use the ghidra-scripts wrapper approach — do not pass token directly via `docker exec`. |
-| Ghidra container crashes on start | Binding to 0.0.0.0 without auth token | Always set `GHIDRA_MCP_AUTH_TOKEN` when using `GHIDRA_MCP_BIND_ADDRESS=0.0.0.0`. |
+| Ghidra container crashes on start | Binding to `0.0.0.0` without auth token | Always set `GHIDRA_MCP_AUTH_TOKEN` when using `GHIDRA_MCP_BIND_ADDRESS=0.0.0.0`. |
 | MCP not visible in Claude session | Registered with project scope, not user scope | Re-register with `--scope user` flag. Check `~/.claude.json` for duplicate entries. |
-| SSH tunnel lost after reboot | Tunnel not persistent | Add tunnel command to `~/.bashrc`: `ssh -i ~/.ssh/remnux_key -N -L 8089:127.0.0.1:8089 remnux@192.168.56.20 &` |
-| npm install hangs on REMnux | Registry blocked (REMnux has no internet) | Install on VM1, then `scp node_modules` to REMnux. Or temporarily enable NAT. |
+| SSH tunnel lost after reboot | Tunnel not persistent | Add to `~/.bashrc`: `ssh -i ~/.ssh/remnux_key -N -L 8089:127.0.0.1:8089 remnux@192.168.56.20 &` |
+| npm install hangs on REMnux | Registry blocked (no internet) | Install on VM1, then `scp node_modules` to REMnux. Or temporarily enable NAT. |
+| sift-ssh MCP not connecting | Wrong username or key path | SIFT default user is `sansforensics` not `ubuntu`. Verify: `ssh -i ~/.ssh/sift_key sansforensics@192.168.56.30` |
+| Volatility3 returns no output | Wrong OS profile or memory image path | Try `vol -f image.dmp windows.info` first to detect OS. Use full absolute path. |
+| netplan apply fails on SIFT | Syntax error or nano not installed | Use `sudo tee /etc/netplan/...` instead of nano. Check interface name with `ip a` first. |
 
 ---
 
-## 14. Security Notes
+## Security Notes
 
-Rules to keep the lab isolated and your host machine safe.
-
-- [ ] **Never execute samples on VM1.** VM1 is the LLM host — it has your API keys and MCP config. Samples only ever live on REMnux (`/home/remnux/samples/`).
-- [ ] **Keep REMnux host-only.** Switch REMnux back to host-only immediately after installing tools. A single NAT session is fine for installs, but leave it off during analysis.
-- [ ] **Use password-protected zips.** Always transfer samples as `zip -P infected sample.zip sample.exe`. This prevents accidental execution and is the VT standard.
-- [ ] **Revert snapshots between samples.** Take a clean snapshot of REMnux before analysis. Revert after each session to ensure no persistence from previous samples.
-- [ ] **Disable shared clipboard and drag-and-drop** in VMware settings for REMnux. This prevents accidental file transfer from the analysis VM to your host.
-- [ ] **API keys stay on VM1 only.** The VirusTotal API key is stored in `~/.config/malware-lab/secrets.env` on VM1. It is never transferred to REMnux.
-- [ ] **The Ghidra auth token is lab-internal only.** `ghidra-lab-token` is bound to `127.0.0.1` inside the Docker container — it is not exposed on the network.
+- **Never execute samples on VM1.** VM1 holds your API keys and MCP config. Samples only ever live on REMnux (`/home/remnux/samples/`).
+- **Keep REMnux host-only.** Switch back to host-only immediately after installing tools. A single NAT session for installs is fine; leave it off during analysis.
+- **Use password-protected zips.** Always transfer as `zip -P infected sample.zip sample.exe`. This is the VirusTotal standard.
+- **Revert snapshots between samples.** Take a clean snapshot of REMnux before analysis; revert after each session.
+- **Disable shared clipboard and drag-and-drop** in VMware settings for REMnux. This prevents accidental file transfer to the host.
+- **API keys stay on VM1 only.** The VirusTotal API key is stored in `~/.config/malware-lab/secrets.env` on VM1 — never transferred to REMnux.
+- **The Ghidra auth token is lab-internal only.** `ghidra-lab-token` is bound to `127.0.0.1` inside Docker — not exposed on the network.
 
 ---
 
-*AI-Powered Malware Analysis Lab — Installation Guide v1.0*
-*VM1: Ubuntu 24.04 · VM2: REMnux · LLM: Claude Code*
+## License
+
+MIT — for authorized security research and education only.
