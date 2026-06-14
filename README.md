@@ -31,6 +31,12 @@
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
+## How it looks
+
+![alt text](triage-llm-lab-1.png)
+![alt text](triage-llm-lab-2.png)
+![alt text](triage-llm-lab-3.png)
+
 **VM roles:**
 
 | VM | OS | IP | Role | Status |
