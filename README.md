@@ -1,11 +1,11 @@
 # AI-Powered Malware Analysis Lab — Installation Guide
 
-A four-VM isolated sandbox that combines Claude Code with REMnux analysis tools, SIFT forensic workstation, GhidraMCP headless decompilation, and VirusTotal intelligence — all orchestrated through MCP servers from a clean Ubuntu host.
+A four-VM isolated sandbox that combines Claude Code with REMnux analysis tools, SIFT forensic workstation, GhidraMCP headless decompilation, VirusTotal intelligence, and Windows dynamic analysis — all orchestrated through MCP servers from a clean Ubuntu host.
 
 | | |
 |---|---|
 | **Hypervisor** | VMware Workstation / Fusion |
-| **VMs** | Ubuntu + REMnux + SIFT + Windows (future) |
+| **VMs** | Ubuntu + REMnux + SIFT + Windows 11 |
 | **LLM** | Claude Code |
 
 ---
@@ -17,18 +17,22 @@ A four-VM isolated sandbox that combines Claude Code with REMnux analysis tools,
 3. [VM1 — Ubuntu 24.04 (LLM Host)](#03-vm1--ubuntu-2404-llm-host)
 4. [VM2 — REMnux (Analysis Machine)](#04-vm2--remnux-analysis-machine)
 5. [VM3 — SIFT Workstation (Forensics)](#05-vm3--sift-workstation-forensics)
-6. [Network Configuration](#06-network-configuration)
-7. [SSH Key Setup](#07-ssh-key-setup)
-8. [remnux-ssh MCP Server](#08-remnux-ssh-mcp-server)
-9. [VirusTotal MCP Server](#09-virustotal-mcp-server)
-10. [Ghidra MCP (Docker Headless)](#10-ghidra-mcp-docker-headless)
-11. [sift-ssh MCP Server](#11-sift-ssh-mcp-server)
-12. [REMnux Analysis Tools](#12-remnux-analysis-tools)
-13. [SIFT Forensic Tools](#13-sift-forensic-tools)
-14. [MCP Tool Groups](#14-mcp-tool-groups)
-15. [Analysis Workflows](#15-analysis-workflows)
-16. [Troubleshooting](#16-troubleshooting)
-17. [Security Notes](#17-security-notes)
+6. [VM4 — Windows 11 (Dynamic Analysis)](#05b-vm4--windows-11-dynamic-analysis)
+7. [Network Configuration](#06-network-configuration)
+8. [SSH Key Setup](#07-ssh-key-setup)
+9. [remnux-ssh MCP Server](#08-remnux-ssh-mcp-server)
+10. [VirusTotal MCP Server](#09-virustotal-mcp-server)
+11. [Ghidra MCP (Docker Headless)](#10-ghidra-mcp-docker-headless)
+12. [sift-ssh MCP Server](#11-sift-ssh-mcp-server)
+13. [x64dbg MCP Server](#11b-x64dbg-mcp-server)
+14. [WinDbg MCP Server](#11c-windbg-mcp-server)
+15. [REMnux Analysis Tools](#12-remnux-analysis-tools)
+16. [SIFT Forensic Tools](#13-sift-forensic-tools)
+17. [Windows Dynamic Analysis Tools](#13b-windows-dynamic-analysis-tools)
+18. [MCP Tool Groups](#14-mcp-tool-groups)
+19. [Analysis Workflows](#15-analysis-workflows)
+20. [Troubleshooting](#16-troubleshooting)
+21. [Security Notes](#17-security-notes)
 
 ---
 
@@ -54,22 +58,21 @@ Four VMs with strict network isolation. Only VM1 has internet access. Samples ne
    │                   │                      └──────────────────────┘
    │                   │                      ┌──────────────────────┐
    │                   │ ───────────────────► │ VM4                   │
-   │                   │                      │ Windows 10             │
+   │                   │                      │ Windows 11             │
    │                   │                      │ Dynamic Analysis +     │
-   │                   │                      │ x64dbg                 │
+   │                   │                      │ x64dbg + WinDbg        │
    └──────────────────┘                      │ Host-only · .56.40     │
-                                              │ (future)               │
                                               └──────────────────────┘
 ```
 
-> **ℹ️ Key principle:** VM1 (Ubuntu) is the only machine with internet access. Samples are transferred to REMnux or SIFT via SCP and never executed on VM1. Claude orchestrates all analysis remotely over SSH.
+> **Key principle:** VM1 (Ubuntu) is the only machine with internet access. Samples are transferred to REMnux or SIFT via SCP and never executed on VM1. Claude orchestrates all analysis remotely over SSH.
 
 | VM | OS | Role | IP | Internet |
 |----|----|------|----|----------|
 | `VM1` | Ubuntu 24.04 LTS | Claude Code + MCP orchestration host | `192.168.56.10` | ✅ Yes |
 | `VM2` | REMnux (Ubuntu-based) | Static analysis, Ghidra, deobfuscation, malware triage | `192.168.56.20` | ❌ No |
 | `VM3` | SIFT Workstation (Ubuntu 22.04) | Disk forensics, memory analysis, timeline, registry | `192.168.56.30` | ❌ No |
-| `VM4` | Windows 10 | Dynamic analysis, x64dbg debugging, FLARE-VM | `192.168.56.40` | 🔶 Future |
+| `VM4` | Windows 11 | Dynamic analysis, x64dbg debugging, WinDbg, FakeNet-NG | `192.168.56.40` | ❌ No |
 
 ---
 
@@ -90,12 +93,17 @@ Download everything before configuring the network. All VMs need internet to ins
 
 ### Downloads Required
 
-- [ ] **Ubuntu 24.04 LTS ISO** — [ubuntu.com/download](https://ubuntu.com/download/desktop) — for VM1
-- [ ] **REMnux OVA** — [remnux.org](https://remnux.org) — pre-built analysis VM
-- [ ] **SIFT Workstation OVA** — [sans.org/tools/sift-workstation](https://www.sans.org/tools/sift-workstation) — requires free SANS account. Default login: `sansforensics` / `forensics`
-- [ ] **VMware Workstation / Fusion** — [vmware.com](https://www.vmware.com)
+- [ ] **Ubuntu 24.04 LTS ISO** — for VM1
+- [ ] **REMnux OVA** — pre-built analysis VM
+- [ ] **SIFT Workstation OVA** — requires free SANS account. Default login: `sansforensics` / `forensics`
+- [ ] **Windows 11 ISO** — for VM4 dynamic analysis
+- [ ] **x64dbg** — Windows debugger with MCP plugin
+- [ ] **x64dbg MCP plugin** — `x64dbg-mcp` from [github.com/SetsunaYukiOvO/x64dbg-mcp](https://github.com/SetsunaYukiOvO/x64dbg-mcp)
+- [ ] **FakeNet-NG 3.5** — pre-built executable from [github.com/mandiant/flare-fakenet-ng/releases/tag/v3.5](https://github.com/mandiant/flare-fakenet-ng/releases/tag/v3.5)
+- [ ] **mcp-windbg** — `pip install mcp-windbg` on VM4
+- [ ] **VMware Workstation / Fusion**
 - [ ] **Anthropic account** with Claude Pro, Max, Team, or Enterprise subscription
-- [ ] **VirusTotal API key** — Premium recommended for file downloads — [virustotal.com](https://www.virustotal.com)
+- [ ] **VirusTotal API key** — Premium recommended for file downloads
 
 ### VM Allocation
 
@@ -104,15 +112,13 @@ Download everything before configuring the network. All VMs need internet to ins
 | VM1 — Ubuntu 24.04 | 4 GB | 2 | 40 GB | ✅ Active |
 | VM2 — REMnux | 4 GB | 2 | 60 GB | ✅ Active |
 | VM3 — SIFT Workstation | 4 GB | 2 | 80 GB | ✅ Active |
-| VM4 — Windows 10 | 4 GB | 2 | 80 GB | 🔶 Future |
+| VM4 — Windows 11 | 4 GB | 2 | 80 GB | ✅ Active |
 
 ---
 
 ## 03. VM1 — Ubuntu 24.04 (LLM Host)
 
 Install Ubuntu 24.04, then install Claude Code and all MCP server dependencies. Keep VM1 on NAT throughout this section.
-
-> **ℹ️** VM1 network adapter: set to **NAT** for now. You will add a second host-only adapter in the Network Configuration section.
 
 ### Step 1 — System Update
 
@@ -124,10 +130,7 @@ sudo apt install -y curl git build-essential python3 python3-pip zip unzip
 ### Step 2 — Install Claude Code
 
 ```bash
-# Install Claude Code via native installer
 curl -fsSL https://claude.ai/install.sh | bash
-
-# Verify
 claude --version
 claude doctor
 ```
@@ -135,7 +138,6 @@ claude doctor
 ### Step 3 — Authenticate Claude Code
 
 ```bash
-# Launch Claude — follow the device code prompt
 claude
 # 1. Select "Sign in with Claude.ai"
 # 2. Open the displayed URL in your browser
@@ -176,26 +178,33 @@ At the start of every session, list all available tools grouped by category:
 1. remnux-ssh MCP tools grouped by [CATEGORY] tag
 2. sift-ssh MCP tools grouped by [CATEGORY] tag
 3. virustotal MCP tools with a short description of each
+4. x64dbg MCP tools grouped by their category
+5. windbg MCP tools grouped by their category
 Then wait for the next instruction.
 
 ## VMs
 - VM1 Ubuntu:  192.168.56.10 — this machine (Claude Code + MCP host)
 - VM2 REMnux:  192.168.56.20 — static analysis, Ghidra
 - VM3 SIFT:    192.168.56.30 — disk/memory/timeline forensics
+- VM4 Windows: 192.168.56.40 — dynamic analysis, x64dbg, WinDbg
 
 ## SSH Keys & Commands
-- ~/.ssh/remnux_key → VM2: ssh -i ~/.ssh/remnux_key remnux@192.168.56.20
-- ~/.ssh/sift_key   → VM3: ssh -i ~/.ssh/sift_key sansforensics@192.168.56.30
+- ~/.ssh/remnux_key  → VM2: ssh -i ~/.ssh/remnux_key remnux@192.168.56.20
+- ~/.ssh/sift_key    → VM3: ssh -i ~/.ssh/sift_key sansforensics@192.168.56.30
+- ~/.ssh/windows_key → VM4: ssh -i ~/.ssh/windows_key analyst@192.168.56.40
 
 ## MCP Servers
 - remnux-ssh  → static analysis tools on REMnux
 - sift-ssh    → forensic tools on SIFT
 - virustotal  → hash lookups, detections, sample downloads (password: infected)
 - ghidra-mcp  → NOT used directly; use remnux-ssh ghidra_* tools instead
+- x64dbg      → debugger control on Windows VM (via SSH tunnel port 3000)
+- windbg      → CDB/WinDbg crash dump analysis on Windows VM (via SSH tunnel port 8000)
 
 ## Sample Transfer
 scp -i ~/.ssh/remnux_key <file> remnux@192.168.56.20:/home/remnux/intake/
 scp -i ~/.ssh/sift_key <file> sansforensics@192.168.56.30:/cases/
+scp -i ~/.ssh/windows_key <file> analyst@192.168.56.40:C:/samples/
 
 ## Directories — REMnux (VM2)
 - Intake:   /home/remnux/intake/
@@ -204,6 +213,10 @@ scp -i ~/.ssh/sift_key <file> sansforensics@192.168.56.30:/cases/
 
 ## Directories — SIFT (VM3)
 - Evidence: /cases/   Memory: /cases/*.dmp   Disk: /cases/*.dd
+
+## Directories — Windows (VM4)
+- Samples:  C:\samples\
+- Dumps:    C:\dumps\
 
 ## Malware Analysis Workflow (REMnux)
 1. Download via virustotal MCP → ~/downloads/sample.zip
@@ -221,6 +234,13 @@ scp -i ~/.ssh/sift_key <file> sansforensics@192.168.56.30:/cases/
 5. Timeline: timeline_create → timeline_filter → timeline_search
 6. Registry: registry_analyze
 
+## Dynamic Analysis Workflow (Windows)
+1. Start FakeNet on VM4 manually before detonating
+2. Transfer: scp -i ~/.ssh/windows_key <sample> analyst@192.168.56.40:C:/samples/
+3. x64dbg: debug_init → breakpoint_set on APIs → debug_run
+4. Unpack: dump_detect_oep → dump_module
+5. Transfer dump back to REMnux for static analysis
+
 ## Ghidra Headless Server (via remnux-ssh)
 - Auth: Authorization: Bearer ghidra-lab-token
 - Load PE/ELF: ghidra_load_sample with path only (auto-detects)
@@ -230,44 +250,50 @@ scp -i ~/.ssh/sift_key <file> sansforensics@192.168.56.30:/cases/
   - ARM 32-bit:  ARM:LE:32:v8
   - ARM 64-bit:  AARCH64:LE:64:v8A
 - After raw blobs: call ghidra_run_analysis with entry_offset=0x0
-- Workflow: ghidra_load_sample → ghidra_run_analysis → ghidra_list_functions → ghidra_decompile
-- Path mapping: /home/remnux/samples/ → /data/ (handled automatically by ghidra-post.sh)
+- Path mapping: /home/remnux/samples/ → /data/ (handled by ghidra-post.sh)
 
 ## Rules
 - Never store or execute samples on VM1
 - Samples only live in /home/remnux/samples/ on REMnux
 - Evidence only in /cases/ on SIFT
-- Always revert REMnux snapshot after analysis
+- Windows samples in C:\samples\ on VM4
+- Always revert REMnux and Windows snapshots after analysis
 EOF
 ```
 
 ### Step 7 — Create the `lab` Shortcut
-
-Adds a shell function that starts Claude with all tools listed at startup.
 
 ```bash
 cat >> ~/.bashrc << 'EOF'
 
 lab() {
   cd ~/malware-analysis
+  # Start SSH tunnels — x64dbg (3000) and WinDbg (8000)
+  ssh -i ~/.ssh/windows_key -N \
+    -L 3000:127.0.0.1:3000 \
+    -L 8000:127.0.0.1:8000 \
+    analyst@192.168.56.40 &>/dev/null &
+  sleep 3  # wait for tunnels to establish
   echo "Loading malware analysis lab..."
   claude "Show all available tools for this malware analysis lab grouped by category:
 1. List all tools from remnux-ssh MCP grouped by their [CATEGORY] tag
 2. List all tools from sift-ssh MCP grouped by their [CATEGORY] tag
 3. List all tools from virustotal MCP with a short description of each
+4. List all tools from x64dbg MCP grouped by their category
+5. List all tools from windbg MCP grouped by their category
 After showing the full list, wait for my next instruction."
 }
 EOF
 source ~/.bashrc
 ```
 
-> **✅** Type `lab` from anywhere to start an analysis session. Claude will list all tools then wait for your first prompt.
+> Type `lab` from anywhere to start an analysis session. The SSH tunnels to VM4 start automatically.
 
 ---
 
 ## 04. VM2 — REMnux (Analysis Machine)
 
-Import the REMnux OVA, install all tools while NAT is active, then switch to host-only. Complete all steps before changing the network adapter.
+Import the REMnux OVA, install all tools while NAT is active, then switch to host-only.
 
 > **⚠️** Keep REMnux on **NAT** during this entire section.
 
@@ -281,7 +307,7 @@ In VMware: **File → Open** → select the REMnux `.ova` → Import. Allocate 4
 sudo apt update
 sudo apt install -y openssh-server
 sudo systemctl enable ssh && sudo systemctl start ssh
-sudo ss -tlnp | grep 22  # verify listening
+sudo ss -tlnp | grep 22
 ```
 
 ### Step 3 — Install Additional Analysis Tools
@@ -305,7 +331,7 @@ go version
 blint --version 2>/dev/null || echo "blint installed as Python package"
 ```
 
-> **ℹ️** Most tools are pre-installed on REMnux. The commands above install the few that require manual installation. Run them all — existing installs will simply be skipped.
+> Most tools are pre-installed on REMnux. Run the commands above — existing installs will simply be skipped.
 
 ### Step 4 — Install Docker (for Ghidra MCP)
 
@@ -358,7 +384,6 @@ sudo apt install -y sleuthkit yara python3-yara \
   dcfldd hashdeep ssdeep exiftool \
   libewf2t64 afflib-tools git python3-pip
 
-# Python forensic libraries
 pip3 install python-registry construct dissect.cstruct \
   --break-system-packages 2>&1 | tail -3
 
@@ -396,13 +421,109 @@ sudo netplan apply
 ip a | grep 192.168.56.30  # verify
 ```
 
-> **ℹ️** After applying the static IP, switch the VMware network adapter to **Host-only (VMnet1)**. SIFT will then be reachable from VM1 at `192.168.56.30`.
+> After applying the static IP, switch the VMware adapter to **Host-only (VMnet1)**.
+
+---
+
+## 05b. VM4 — Windows 11 (Dynamic Analysis)
+
+Install Windows 11, configure OpenSSH, set static IP, install x64dbg with MCP plugin, mcp-windbg, and FakeNet-NG. Keep on NAT during installation.
+
+> **⚠️** Keep Windows 11 on **NAT** during this section.
+
+### Step 1 — Install OpenSSH Server
+
+```powershell
+# Run in PowerShell (Admin)
+Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+Start-Service sshd
+Set-Service -Name sshd -StartupType Automatic
+New-NetFirewallRule -Name sshd -DisplayName 'OpenSSH Server' `
+  -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22
+New-LocalUser -Name "analyst" -Password (ConvertTo-SecureString "LabPassword123!" -AsPlainText -Force)
+Add-LocalGroupMember -Group "Administrators" -Member "analyst"
+```
+
+### Step 2 — Set Static IP
+
+```powershell
+Get-NetAdapter  # find adapter name
+New-NetIPAddress -InterfaceAlias "Ethernet0" -IPAddress 192.168.56.40 -PrefixLength 24
+```
+
+Then in VMware: **VM → Settings → Network Adapter → Host-only (VMnet1)**
+
+### Step 3 — Configure SSH Key Authentication
+
+```powershell
+# Run in PowerShell (Admin)
+New-Item -ItemType Directory -Path "C:\Users\analyst\.ssh" -Force
+icacls "C:\Users\analyst\.ssh" /inheritance:r
+icacls "C:\Users\analyst\.ssh" /grant "analyst:(OI)(CI)F"
+
+# Paste public key from VM1 (cat ~/.ssh/windows_key.pub)
+$pubkey = "paste_content_of_windows_key.pub_here"
+Set-Content -Path "C:\Users\analyst\.ssh\authorized_keys" -Value $pubkey
+icacls "C:\Users\analyst\.ssh\authorized_keys" /inheritance:r
+icacls "C:\Users\analyst\.ssh\authorized_keys" /grant "analyst:F"
+icacls "C:\Users\analyst\.ssh\authorized_keys" /grant "SYSTEM:F"
+
+# Disable administrator_authorized_keys override in sshd_config
+$c = "C:\ProgramData\ssh\sshd_config"
+(Get-Content $c) -replace '^Match Group administrators','#Match Group administrators' | Set-Content $c
+Restart-Service sshd
+```
+
+### Step 4 — Install x64dbg + MCP Plugin
+
+- Download x64dbg from [x64dbg.com](https://x64dbg.com) → extract to `C:\Users\tasox\Downloads\x64dbg\`
+- Download MCP plugin from [github.com/SetsunaYukiOvO/x64dbg-mcp](https://github.com/SetsunaYukiOvO/x64dbg-mcp)
+- Place `x64dbg_mcp.dp64` → `x64dbg\release\x64\plugins\`
+- Place `x64dbg_mcp.dp32` → `x64dbg\release\x32\plugins\`
+- Plugin starts HTTP server on `127.0.0.1:3000` automatically when x64dbg loads
+
+### Step 5 — Install mcp-windbg
+
+```powershell
+pip install mcp-windbg
+mcp-windbg --help
+```
+
+### Step 6 — Install FakeNet-NG
+
+- Download `fakenet.exe` from [flare-fakenet-ng releases v3.5](https://github.com/mandiant/flare-fakenet-ng/releases/tag/v3.5)
+- Extract to `C:\Users\tasox\Downloads\fakenet3.5\fakenet3.5\`
+- **Do not autostart** — launch manually before each analysis session
+
+### Step 7 — Create Autostart Script
+
+```powershell
+New-Item -ItemType Directory -Path "C:\lab" -Force
+
+@'
+Start-Process "C:\Users\tasox\Downloads\x64dbg\release\x64\x64dbg.exe" -WindowStyle Normal
+Start-Process "C:\Users\tasox\Downloads\x64dbg\release\x32\x32dbg.exe" -WindowStyle Normal
+Start-Sleep -Seconds 5
+Start-Process "C:\Users\tasox\AppData\Local\Programs\Python\Python313\Scripts\mcp-windbg.exe" `
+  -ArgumentList "--transport streamable-http --host 127.0.0.1 --port 8000"
+'@ | Out-File "C:\lab\startup.ps1" -Encoding UTF8
+
+$action = New-ScheduledTaskAction -Execute "powershell.exe" `
+  -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File C:\lab\startup.ps1"
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User "tasox"
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+Register-ScheduledTask -TaskName "MalwareLab-Startup" `
+  -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -Force
+Start-ScheduledTask -TaskName "MalwareLab-Startup"
+```
+
+> x64dbg and mcp-windbg start automatically at login. FakeNet must be started manually before detonating samples.
 
 ---
 
 ## 06. Network Configuration
 
-Configure VMware adapters and static IPs on VM1 and VM2. Do this after all tools are installed.
+Configure VMware adapters and static IPs. Do this after all tools are installed.
 
 ### VMware Adapter Configuration
 
@@ -411,16 +532,11 @@ Configure VMware adapters and static IPs on VM1 and VM2. Do this after all tools
 | VM1 — Ubuntu | NAT — internet access | Host-only VMnet1 — lab network |
 | VM2 — REMnux | Host-only VMnet1 — lab network only | — |
 | VM3 — SIFT | Host-only VMnet1 — lab network only | — |
+| VM4 — Windows | Host-only VMnet1 — lab network only | — |
 
 ### Static IP on VM1 (Ubuntu)
 
-```bash
-# Find interface name (look for second adapter, not NAT one)
-ip a
-sudo nano /etc/netplan/01-network-manager-all.yaml
-```
-
-`/etc/netplan/01-network-manager-all.yaml` (VM1):
+`/etc/netplan/01-network-manager-all.yaml`:
 
 ```yaml
 network:
@@ -439,8 +555,6 @@ sudo netplan apply
 
 ### Static IP on VM2 (REMnux)
 
-`/etc/netplan/01-network-manager-all.yaml` (VM2):
-
 ```yaml
 network:
   version: 2
@@ -455,19 +569,20 @@ sudo netplan apply
 ping -c 3 192.168.56.10  # test VM1 reachability
 ```
 
-> **✅** VM1, VM2 and VM3 should all be able to ping each other on `192.168.56.0/24`. VM1 should also have internet access via NAT.
+> VM1, VM2, VM3 and VM4 should all ping each other on `192.168.56.0/24`. VM1 should also have internet via NAT.
 
 ---
 
 ## 07. SSH Key Setup
 
-Generate SSH keys on VM1 for both REMnux and SIFT. Required for MCP servers to communicate.
+Generate SSH keys on VM1 for all three analysis VMs.
 
 **1. Generate keys on VM1**
 
 ```bash
-ssh-keygen -t ed25519 -f ~/.ssh/remnux_key -N "" -C "vm1-to-remnux"
-ssh-keygen -t ed25519 -f ~/.ssh/sift_key   -N "" -C "vm1-to-sift"
+ssh-keygen -t ed25519 -f ~/.ssh/remnux_key  -N "" -C "vm1-to-remnux"
+ssh-keygen -t ed25519 -f ~/.ssh/sift_key    -N "" -C "vm1-to-sift"
+ssh-keygen -t ed25519 -f ~/.ssh/windows_key -N "" -C "vm1-to-windows"
 ```
 
 **2. Copy keys to VMs**
@@ -475,6 +590,7 @@ ssh-keygen -t ed25519 -f ~/.ssh/sift_key   -N "" -C "vm1-to-sift"
 ```bash
 ssh-copy-id -i ~/.ssh/remnux_key.pub remnux@192.168.56.20
 ssh-copy-id -i ~/.ssh/sift_key.pub   sansforensics@192.168.56.30
+cat ~/.ssh/windows_key.pub  # paste this into VM4 authorized_keys (see VM4 Step 3)
 ```
 
 **3. Create SSH config** (`~/.ssh/config` on VM1)
@@ -491,6 +607,12 @@ Host sift
     User sansforensics
     IdentityFile ~/.ssh/sift_key
     StrictHostKeyChecking no
+
+Host windows
+    HostName 192.168.56.40
+    User analyst
+    IdentityFile ~/.ssh/windows_key
+    StrictHostKeyChecking no
 ```
 
 **4. Test connectivity**
@@ -498,13 +620,12 @@ Host sift
 ```bash
 ssh remnux "uname -a && echo REMnux OK"
 ssh sift "uname -a && vol -h 2>/dev/null | head -2 && echo SIFT OK"
+ssh windows "whoami && hostname && echo Windows OK"
 ```
 
 ---
 
 ## 08. remnux-ssh MCP Server
-
-Build and register the custom MCP server that lets Claude run commands on REMnux over SSH.
 
 ### Build the MCP Server
 
@@ -533,8 +654,6 @@ npx tsc && ls build/
 
 ### Create Ghidra Helper Scripts on REMnux
 
-These scripts solve SSH quoting issues when communicating with the Ghidra Docker container. The POST script automatically translates REMnux paths to container paths and supports an optional language parameter for shellcode/raw binaries.
-
 ```bash
 ssh remnux 'python3 -c "
 import os
@@ -547,7 +666,6 @@ docker exec ghidra-mcp sh /tmp/gh_cmd.sh
 \"\"\"
 
 post_script = \"\"\"#!/bin/sh
-# Translate REMnux path to Docker container path automatically
 FILE_PATH=\$(echo \"\$1\" | sed \x27s|/home/remnux/samples/|/data/|\x27)
 LANGUAGE=\$2
 if [ -n \"\$LANGUAGE\" ]; then
@@ -570,7 +688,7 @@ print(\"Scripts written\")
 "'
 ```
 
-> **ℹ️** The POST script maps `/home/remnux/samples/` → `/data/` automatically. Pass either the REMnux path or the container path — both work. For raw shellcode, pass the language as a second argument, e.g. `x86:LE:64:default`.
+> The POST script maps `/home/remnux/samples/` → `/data/` automatically. For raw shellcode, pass the language as a second argument e.g. `x86:LE:64:default`.
 
 ### Register with Claude Code
 
@@ -589,9 +707,7 @@ claude mcp list | grep remnux-ssh
 
 ## 09. VirusTotal MCP Server
 
-Set up the VirusTotal MCP for hash lookups, file reports, and sample downloads.
-
-> **ℹ️** File download requires a **VirusTotal Premium API key**. Hash lookups and reports work with a free key.
+> File download requires a **VirusTotal Premium API key**. Hash lookups and reports work with a free key.
 
 ```bash
 git clone https://github.com/BurtTheCoder/mcp-virustotal ~/mcp/mcp-virustotal
@@ -614,16 +730,14 @@ claude mcp add virustotal \
 | `get_url_report` | URL | URL reputation, category, detections | Free |
 | `get_ip_report` | IP address | IP reputation, ASN, country, associated malware | Free |
 | `get_domain_report` | Domain | Domain reputation, WHOIS, DNS history | Free |
-| `search` | VTI query | Advanced search with VTI modifiers, e.g. `type:peexe tag:signed` | Free |
+| `search` | VTI query | Advanced search with VTI modifiers e.g. `type:peexe tag:signed` | Free |
 | `download_file` | SHA256 + path | Download sample as password-protected zip (password: `infected`) | Premium |
 
-> **ℹ️** `download_file` saves to `~/downloads/` on VM1. Always transfer to REMnux via `scp` before unzipping — never extract samples on VM1.
+> `download_file` saves to `~/downloads/` on VM1. Always transfer to REMnux via `scp` before unzipping.
 
 ---
 
 ## 10. Ghidra MCP (Docker Headless)
-
-Run GhidraMCP as a headless Docker container on REMnux. Build the image on VM1 (internet access) and transfer to REMnux.
 
 ### Step 1 — Build Docker Image on VM1
 
@@ -647,6 +761,7 @@ scp -i ~/.ssh/remnux_key /tmp/ghidra-mcp-headless.tar remnux@192.168.56.20:/home
 ```
 
 ```bash
+# On REMnux
 docker load -i /home/remnux/ghidra-mcp-headless.tar
 
 python3 -c "
@@ -671,13 +786,11 @@ sleep 20
 docker exec ghidra-mcp curl -s http://localhost:8089/get_version
 ```
 
-> **✅** Expected: `{"plugin_version": "5.13.1-headless", "mode": "headless"}`
+Expected: `{"plugin_version": "5.13.1-headless", "mode": "headless"}`
 
 ---
 
 ## 11. sift-ssh MCP Server
-
-Build and register the sift-ssh MCP server — same pattern as remnux-ssh.
 
 ```bash
 mkdir -p ~/mcp/sift-mcp/src && cd ~/mcp/sift-mcp
@@ -695,17 +808,65 @@ claude mcp add sift-ssh \
   --username sansforensics \
   --private-key /home/$USER/.ssh/sift_key
 
-# Test
 claude mcp list | grep sift
 ```
 
-> **ℹ️** Test with: *"Use sift-ssh run_command to run: uname -a && vol -h 2>/dev/null | head -2"*
+> Test with: *"Use sift-ssh run_command to run: uname -a && vol -h 2>/dev/null | head -2"*
+
+---
+
+## 11b. x64dbg MCP Server
+
+x64dbg MCP runs on VM4 and is accessed from VM1 via an SSH tunnel. The tunnel must be active before starting a Claude session.
+
+### Step 1 — Start SSH Tunnel from VM1
+
+```bash
+# Start tunnel for both x64dbg (3000) and WinDbg (8000)
+ssh -i ~/.ssh/windows_key -N \
+  -L 3000:127.0.0.1:3000 \
+  -L 8000:127.0.0.1:8000 \
+  analyst@192.168.56.40 &
+
+sleep 3  # wait for tunnel to establish
+
+# Test x64dbg MCP is responding
+curl -s -X POST http://127.0.0.1:3000/rpc \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | python3 -m json.tool
+```
+
+### Step 2 — Register with Claude Code
+
+```bash
+claude mcp add x64dbg \
+  --scope user \
+  --transport http \
+  -- http://127.0.0.1:3000/mcp
+
+claude mcp list | grep x64dbg
+```
+
+> x64dbg must be running on VM4 with the MCP plugin loaded before this MCP will connect. The `lab` function starts the tunnel automatically.
+
+---
+
+## 11c. WinDbg MCP Server
+
+mcp-windbg provides crash dump analysis and kernel debugging via CDB. Runs on VM4, accessed via SSH tunnel on port 8000.
+
+```bash
+claude mcp add windbg \
+  --scope user \
+  --transport http \
+  -- http://127.0.0.1:8000/mcp
+
+claude mcp list | grep windbg
+```
 
 ---
 
 ## 12. REMnux Analysis Tools
-
-Complete tool inventory available on REMnux, organized by category. All tools tagged `install` require manual installation (Step 3 of VM2 setup).
 
 ### Static Analysis
 
@@ -782,24 +943,22 @@ Complete tool inventory available on REMnux, organized by category. All tools ta
 |------|-------------|--------|
 | `cfr` | Decompile JAR/class to Java source — handles modern Java well | pre-installed |
 | `procyon` | Alternative Java decompiler — better with obfuscated code | pre-installed |
-| `javap` | Disassemble .class bytecode to JVM instructions | built-in |
-| `jadx` | Decompile JAR and Android APK — best for obfuscated JARs | pre-installed |
+| `javap` | Disassemble `.class` bytecode to JVM instructions | built-in |
+| `jadx` | Decompile JAR and Android APK — best for obfuscated JARs (`/usr/local/jadx/bin/jadx`) | pre-installed |
 | `java` / `jar` | JDK tools for manifest inspection and class listing | built-in |
 
 ### Go Binary Analysis
 
 | Tool | Description | Source |
 |------|-------------|--------|
-| `go version -m` | Extract build info, module dependencies from Go binary | install |
+| `go version -m` | Extract build info and module dependencies | install |
 | `blint` | Go binary capability detection — MITRE ATT&CK mapping | install |
 | `nm` / `objdump` | Symbol extraction — Go symbols are rarely stripped | built-in |
-| `strings` | Go binaries embed module paths unobfuscated — very effective | built-in |
+| `strings` | Go binaries embed module paths unobfuscated | built-in |
 
 ---
 
 ## 13. SIFT Forensic Tools
-
-Complete tool inventory available on SIFT Workstation. Most are pre-installed; a few require manual installation (Step 3 of VM3 setup).
 
 ### Memory Forensics
 
@@ -840,9 +999,43 @@ Complete tool inventory available on SIFT Workstation. Most are pre-installed; a
 
 ---
 
-## 14. MCP Tool Groups
+## 13b. Windows Dynamic Analysis Tools
 
-Tools are organized into groups via tags in their descriptions. Claude uses these tags to pick the right tool automatically.
+### Debuggers
+
+| Tool | Description | Source |
+|------|-------------|--------|
+| `x64dbg` (64-bit) | User-mode Windows debugger — breakpoints, memory inspection, API tracing, unpacking | install |
+| `x32dbg` (32-bit) | 32-bit companion for analyzing 32-bit malware | install |
+| `WinDbg / CDB` | Kernel-mode debugger — crash dump analysis, driver debugging | pre-installed |
+
+### MCP Plugins
+
+| Tool | Description | Source |
+|------|-------------|--------|
+| `x64dbg-mcp plugin` | Exposes x64dbg over HTTP/JSON-RPC on port 3000 — 60+ tools for AI-driven debugging | install |
+| `mcp-windbg` | Python wrapper around CDB — exposes WinDbg over HTTP on port 8000 | install |
+
+### Network Simulation
+
+| Tool | Description | Source |
+|------|-------------|--------|
+| `FakeNet-NG 3.5` | Intercepts and simulates DNS, HTTP, FTP, SMTP, IRC — prevents malware from reaching real C2 | install |
+
+### Autostart Configuration
+
+| Process | Port | Purpose | Autostart |
+|---------|------|---------|-----------|
+| `x64dbg.exe` (64-bit) | 3000 | User-mode debugging via MCP | ✅ Yes |
+| `x32dbg.exe` (32-bit) | 3000 | 32-bit debugging via MCP | ✅ Yes |
+| `mcp-windbg.exe` | 8000 | WinDbg/CDB via MCP | ✅ Yes |
+| `fakenet.exe` | — | Network traffic simulation | ⚠️ Manual |
+
+> Always start FakeNet-NG **before** detonating a sample. Always revert the VM4 snapshot **after** each analysis session.
+
+---
+
+## 14. MCP Tool Groups
 
 ### remnux-ssh MCP Tool Groups
 
@@ -859,7 +1052,7 @@ Tools are organized into groups via tags in their descriptions. Claude uses thes
 | .NET Assembly | `[DOTNET]` | `dotnet_decompile`, `dotnet_il_disasm`, `dotnet_pe_headers`, `dotnet_metadata`, `dotnet_strings`, `dotnet_resources` | C#, VB.NET, F# assemblies |
 | Java / JAR | `[JAVA]` | `java_decompile`, `java_disassemble`, `java_jar_inspect`, `java_extract_jar`, `jadx_decompile`, `java_strings_iocs` | JAR files, .class, Android APKs |
 | Go Binaries | `[GO]` | `go_info`, `go_symbols`, `go_strings`, `go_capabilities`, `go_modules` | Compiled Go binaries |
-| Ghidra | `[GHIDRA]` | `ghidra_load_sample`, `ghidra_run_analysis`, `ghidra_list_functions`, `ghidra_decompile`, `ghidra_list_imports`, `ghidra_list_strings`, `ghidra_detect_malware`, `ghidra_extract_iocs` | Deep reverse engineering — call `ghidra_run_analysis` after loading shellcode/raw binaries |
+| Ghidra | `[GHIDRA]` | `ghidra_load_sample`, `ghidra_run_analysis`, `ghidra_list_functions`, `ghidra_decompile`, `ghidra_list_imports`, `ghidra_list_strings`, `ghidra_detect_malware`, `ghidra_extract_iocs` | Deep reverse engineering |
 
 ### sift-ssh MCP Tool Groups
 
@@ -873,11 +1066,25 @@ Tools are organized into groups via tags in their descriptions. Claude uses thes
 | Registry Forensics | `[REGISTRY]` | `registry_analyze`, `registry_autoruns`, `registry_useractivity` | Windows registry hive analysis |
 | Triage | `[TRIAGE]` | `triage_case`, `triage_memory`, `triage_disk` | First look at any evidence file |
 
+### x64dbg MCP Tool Groups
+
+| Group | Key Tools | Use when |
+|-------|-----------|----------|
+| Debug Control | `debug_init`, `debug_attach_pid`, `debug_run`, `debug_pause`, `debug_stop`, `debug_step_into`, `debug_step_over`, `debug_step_out`, `debug_run_to` | Starting, stopping and stepping |
+| Breakpoints | `breakpoint_set`, `breakpoint_delete`, `breakpoint_set_condition`, `breakpoint_set_log`, `breakpoint_list` | Setting API hooks, conditional stops |
+| Registers | `register_get`, `register_set`, `register_get_batch`, `register_list` | Inspecting CPU state |
+| Memory | `memory_read`, `memory_write`, `memory_search`, `memory_enumerate`, `memory_get_info` | Reading/searching process memory |
+| Disassembly | `disassembly_at`, `disassembly_range`, `disassembly_function`, `assembler_assemble` | Viewing and modifying code |
+| Modules | `module_list`, `module_get_imports`, `module_get_exports` | Loaded DLLs and API imports |
+| Dumping | `dump_memory_region`, `dump_module`, `dump_detect_oep`, `dump_analyze_module` | Unpacking — OEP detection and dump |
+| Threads/Stack | `thread_list`, `stack_get_trace`, `stack_read_frame` | Multi-threaded malware analysis |
+| Symbols | `symbol_list`, `symbol_search`, `symbol_set_label`, `symbol_set_comment` | Annotating functions during analysis |
+
 ---
 
 ## 15. Analysis Workflows
 
-Standard prompts for Claude Code. Run from `~/malware-analysis` using the `lab` command.
+Run from `~/malware-analysis` using the `lab` command.
 
 ### Workflow 1 — Full PE Sample Analysis
 
@@ -912,25 +1119,6 @@ Available language IDs:
 - x86 32-bit:  x86:LE:32:default
 - ARM 32-bit:  ARM:LE:32:v8
 - ARM 64-bit:  AARCH64:LE:64:v8A
-```
-
-### Workflow 2 — Decompile Specific Functions
-
-```
-After loading a sample into Ghidra, decompile specific functions:
-
-# By function name:
-Use remnux-ssh ghidra_decompile on function named FUN_140001000
-
-# By address:
-Use remnux-ssh ghidra_decompile on function at address 0x140001000
-
-# Batch decompile suspicious functions:
-Use remnux-ssh to:
-1. Call ghidra_list_functions
-2. Identify functions with suspicious names (inject, decrypt, download, exec, socket, connect)
-3. Decompile each suspicious function using ghidra_decompile
-4. Summarize the capabilities found
 ```
 
 ### Workflow 2 — Office Document Analysis
@@ -1033,6 +1221,57 @@ Investigate the disk image at /cases/disk.dd on SIFT:
 9. Summarize: timeline of events, suspicious files, IOCs
 ```
 
+### Workflow 10 — Dynamic Analysis with x64dbg + FakeNet
+
+```
+Dynamic analysis of /home/remnux/samples/malware.exe:
+
+Pre-flight (do manually on VM4 before starting):
+- Start FakeNet: cd C:\Users\tasox\Downloads\fakenet3.5\fakenet3.5 && fakenet.exe
+- Transfer sample: scp -i ~/.ssh/windows_key analyst@192.168.56.40:C:/samples/malware.exe
+
+Then use x64dbg MCP to:
+1. debug_init with C:\samples\malware.exe
+2. breakpoint_set on suspicious APIs: CreateProcess, VirtualAlloc, WSAConnect, RegSetValue
+3. debug_run to execute the sample
+4. On each breakpoint hit: register_get_batch to capture CPU state
+5. memory_read at addresses pointed to by registers
+6. module_list to see what DLLs were loaded
+7. stack_get_trace to see call chain
+8. If packed: dump_detect_oep to find OEP then dump_module
+9. Summarize: execution flow, APIs called, network IOCs from FakeNet, verdict
+```
+
+### Workflow 11 — Unpacking with x64dbg
+
+```
+Unpack the protected sample at C:\samples\packed.exe using x64dbg:
+
+1. x64dbg debug_init with C:\samples\packed.exe
+2. x64dbg debug_run — let the unpacker run
+3. x64dbg dump_detect_oep to locate the Original Entry Point
+4. x64dbg dump_module to extract the unpacked binary
+5. Transfer the dump back to VM1:
+   scp -i ~/.ssh/windows_key analyst@192.168.56.40:C:\dumps\unpacked.exe ~/downloads/
+6. Transfer to REMnux: scp ~/downloads/unpacked.exe remnux@192.168.56.20:/home/remnux/samples/
+7. remnux-ssh triage_full on the unpacked binary
+8. remnux-ssh ghidra_load_sample for deep analysis
+```
+
+### Workflow 12 — Crash Dump Analysis with WinDbg
+
+```
+Analyze the crash dump at C:\dumps\crash.dmp using WinDbg MCP:
+
+1. Use windbg MCP to open and analyze C:\dumps\crash.dmp
+2. Get the exception record and faulting address
+3. Get the call stack at time of crash
+4. List loaded modules and check for suspicious ones
+5. Check if any known malicious modules are present
+6. Cross-reference any suspicious hashes with virustotal
+7. Summarize: crash cause, faulting module, indicators of compromise
+```
+
 ---
 
 ## 16. Troubleshooting
@@ -1043,34 +1282,37 @@ Investigate the disk image at /cases/disk.dd on SIFT:
 | MCP shows "Failed to connect" | Node.js path wrong or build not compiled | Run `npx tsc`. Re-register with `claude mcp remove` then `add`. |
 | Ghidra returns "Unauthorized" | Auth token stripped through SSH layers | Use the ghidra-scripts wrapper approach — never pass token via `docker exec` args directly. |
 | Ghidra container crashes | Binding 0.0.0.0 without auth token | Always set `GHIDRA_MCP_AUTH_TOKEN` when using `GHIDRA_MCP_BIND_ADDRESS=0.0.0.0`. |
-| `ghidra_list_functions` returns empty | Sample loaded but not analyzed | Call `ghidra_run_analysis` with `entry_offset=0x0` after loading. Required for raw shellcode and headerless binaries. |
+| `ghidra_list_functions` returns empty | Sample loaded but not analyzed | Call `ghidra_run_analysis` with `entry_offset=0x0` after loading. Required for raw shellcode. |
 | `ghidra_load_sample` fails on shellcode | Auto-detection fails on headerless binaries | Pass the `language` parameter: `x86:LE:64:default` for 64-bit, `x86:LE:32:default` for 32-bit. |
-| `ghidra_load_sample` returns "File not found" | Wrong path — container uses /data/ not /home/remnux/samples/ | The updated `ghidra-post.sh` translates paths automatically. If using `run_command` directly, use `/data/filename` not `/home/remnux/samples/filename`. |
+| `ghidra_load_sample` returns "File not found" | Container uses `/data/` not `/home/remnux/samples/` | The updated `ghidra-post.sh` translates paths automatically. If using `run_command` directly, use `/data/filename`. |
 | MCP not visible in Claude session | Registered with project scope | Re-register with `--scope user`. Check `~/.claude.json` for duplicates. |
-| npm install hangs on REMnux/SIFT | No internet (host-only network) | Re-enable NAT temporarily to install. Switch back to host-only after. |
+| npm install hangs on REMnux/SIFT | No internet (host-only network) | Re-enable NAT temporarily. Switch back to host-only after. |
 | sift-ssh not connecting | Wrong username or key path | SIFT user is `sansforensics`. Test: `ssh -i ~/.ssh/sift_key sansforensics@192.168.56.30`. |
 | Volatility3 returns no output | Wrong OS profile or image path | Try `vol -f image.dmp windows.info` first. Use full absolute path. |
 | netplan apply fails on SIFT | nano not installed | Use `sudo tee /etc/netplan/...` instead. Check interface name with `ip a`. |
+| x64dbg MCP "connection refused" | SSH tunnel not established or x64dbg not running | Ensure `lab` function was used to start tunnel. Verify x64dbg is open on VM4 with plugin loaded. |
+| x64dbg MCP times out on debug_run | Sample exiting immediately or crashing | Check `debug_pause` first; use `breakpoint_set` on entry point before `debug_run`. |
+| windbg MCP not responding | mcp-windbg not started or tunnel down | Check `C:\lab\startup.ps1` ran. Re-run tunnel: `ssh -N -L 8000:127.0.0.1:8000 windows`. |
+| FakeNet not capturing traffic | FakeNet not started before sample | Always start FakeNet before `debug_init`. Check it's running with `ps` on VM4. |
 | cfr/procyon empty output | Not a valid JAR or encrypted JAR | Verify with `file sample.jar`. Try `jadx` as fallback. |
-| `go version -m` returns nothing | Stripped binary or not Go | Use `strings binary \| grep 'go[0-9]'`. Go binaries still contain module paths in strings even when stripped. |
+| `go version -m` returns nothing | Stripped binary or not Go | Use `strings binary \| grep 'go[0-9]'`. Go binaries embed module paths even when stripped. |
 | jadx not found | Not in PATH on REMnux | Use full path: `/usr/local/jadx/bin/jadx`. |
 
 ---
 
 ## 17. Security Notes
 
-Rules to keep the lab isolated and your host machine safe.
-
-- [ ] **Never execute samples on VM1.** VM1 holds your API keys and MCP config. Samples only ever live on REMnux (`/home/remnux/samples/`) or SIFT (`/cases/`).
+- [ ] **Never execute samples on VM1.** VM1 holds your API keys and MCP config. Samples only ever live on REMnux (`/home/remnux/samples/`), SIFT (`/cases/`), or Windows (`C:\samples\`).
 - [ ] **Keep REMnux and SIFT host-only.** Switch back immediately after installing tools. Never leave analysis VMs on NAT during a session.
-- [ ] **Use password-protected zips.** Always transfer samples as `zip -P infected sample.zip sample.exe`. This is the VT standard and prevents accidental execution.
-- [ ] **Revert snapshots between samples.** Take a clean snapshot of REMnux before analysis. Revert after each session to prevent cross-contamination.
+- [ ] **Use password-protected zips.** Always transfer samples as `zip -P infected sample.zip sample.exe`. This is the VT standard.
+- [ ] **Revert snapshots between samples.** Take clean snapshots of REMnux and Windows before analysis. Revert after each session.
+- [ ] **Always start FakeNet before detonating.** Never run samples on Windows without FakeNet active — malware may reach real C2 servers.
 - [ ] **Disable shared clipboard and drag-and-drop** in VMware for REMnux and SIFT. Prevents accidental file transfer to the host.
 - [ ] **API keys stay on VM1 only.** The VT API key is in `~/.config/malware-lab/secrets.env` on VM1. Never transfer to analysis VMs.
-- [ ] **Hash all evidence.** Use `sift-ssh hash_file` before and after analysis to maintain chain of custody.
+- [ ] **Hash all evidence.** Use `sift-ssh hash_file` before and after forensic analysis to maintain chain of custody.
 - [ ] **The Ghidra auth token is lab-internal only.** `ghidra-lab-token` binds to `127.0.0.1` inside Docker — not exposed on the lab network.
 
 ---
 
-*AI-Powered Malware Analysis Lab — Installation Guide v1.1*
-*VM1: Ubuntu 24.04 · VM2: REMnux · VM3: SIFT
+*AI-Powered Malware Analysis Lab — Installation Guide v1.2*
+*VM1: Ubuntu 24.04 · VM2: REMnux · VM3: SIFT · VM4: Windows 11*
